@@ -1,29 +1,28 @@
 #[macro_export]
 macro_rules! extract {
-    ($src: pat, $dest: expr, $val: expr $(,)?) => {
-        if let $src = $val {
-            Some($dest)
-        } else {
-            None
+    ($src: pat $(if $guard: expr)?, $dest: expr, $val: expr $(,)?) => {
+        match $val {
+            $src $(if $guard)? => ::core::option::Option::Some($dest),
+            _ => ::core::option::Option::None,
         }
     };
 }
 
 #[macro_export]
 macro_rules! extract_fn {
-    (move $src: pat, $dest: expr $(,)?) => {
-        move |__input_variable_that_doesn_t_shaddow_a_different_variable__| -> Option<_> {
+    (move, $src: pat $(if $guard: expr)?, $dest: expr $(,)?) => {
+        move |__input_variable_that_doesn_t_shaddow_a_different_variable__| -> ::core::option::Option<_> {
             $crate::extract!(
-                $src,
+                $src $(if $guard)?,
                 $dest,
                 __input_variable_that_doesn_t_shaddow_a_different_variable__
             )
         }
     };
-    ($src: pat, $dest: expr $(,)?) => {
-        |__input_variable_that_doesn_t_shaddow_a_different_variable__| -> Option<_> {
+    ($src: pat $(if $guard: expr)?, $dest: expr $(,)?) => {
+        |__input_variable_that_doesn_t_shaddow_a_different_variable__| -> ::core::option::Option<_> {
             $crate::extract!(
-                $src,
+                $src $(if $guard)?,
                 $dest,
                 __input_variable_that_doesn_t_shaddow_a_different_variable__
             )
@@ -99,19 +98,54 @@ mod tests {
 
     #[test]
     fn test_extract_fn_with_captured_variable() {
-        let label = String::from("bar value");
-
         enum FooBar {
             Foo(u8),
             Bar(String),
         }
 
-        let extractor = extract_fn!(move FooBar::Bar(x), format!("{}: {:?}", label, x));
+        // This functions is only here so that we require the `move`.
+        fn make_extractor() -> impl FnMut(FooBar) -> Option<String> {
+            let mut i = 0;
+            extract_fn!(
+                move,
+                FooBar::Bar(x),
+                format!(
+                    "bar value[{}]: {:?}",
+                    {
+                        i += 1;
+                        i - 1
+                    },
+                    x
+                )
+            )
+        }
+
+        let mut extractor = make_extractor();
 
         assert_eq!(extractor(FooBar::Foo(6)), None);
         assert_eq!(
             extractor(FooBar::Bar("lorem ipsum".to_owned())).as_deref(),
-            Some("bar value: \"lorem ipsum\"")
+            Some("bar value[0]: \"lorem ipsum\"")
         );
+        assert_eq!(extractor(FooBar::Foo(10)), None);
+        assert_eq!(
+            extractor(FooBar::Bar("foo bar".to_owned())).as_deref(),
+            Some("bar value[1]: \"foo bar\"")
+        );
+        assert_eq!(
+            extractor(FooBar::Bar("baz".to_owned())).as_deref(),
+            Some("bar value[2]: \"baz\"")
+        );
+    }
+
+    #[test]
+    fn the_downside_of_extractor_fn() {
+        let extractor = extract_fn!((a, b, _) if a < 5, (a, b));
+
+        assert_eq!(extractor((1, 2, 3)), Some((1, 2)));
+        assert_eq!(extractor((10, 2, 3)), None);
+
+        // This doesn't compile
+        // assert_eq!(extractor((1, 2, "foo")), Some((1, 2)));
     }
 }
